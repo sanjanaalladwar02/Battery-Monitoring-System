@@ -1,0 +1,95 @@
+from ina219 import INA219, DeviceRangeError
+from time import sleep
+from Adafruit_CharLCD import Adafruit_CharLCD
+from openpyxl import Workbook
+from openpyxl.chart import LineChart
+from openpyxl.chart import Reference
+import time
+
+# INA219 configuration
+SHUNT_OHMS = 0.1
+MAX_EXPECTED_AMPS = 1
+ina = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS)
+ina.configure(ina.RANGE_16V)
+
+# LCD configuration
+lcd = Adafruit_CharLCD(
+    rs=21, en=20,
+    d4=16, d5=12, d6=7, d7=8,
+    cols=16, lines=2
+)
+
+# Battery parameters
+Battery_capacity = 1.25   # Ah
+sample_time = 1           # seconds
+Battery_current = 0
+
+# Create Excel Workbook
+wb = Workbook()
+ws = wb.active
+ws.title = 'Sensor Output'
+
+ws['A1'] = 'Bus Voltage (V)'
+ws['B1'] = 'Bus Current (mA)'
+ws['C1'] = 'Power (mW)'
+ws['D1'] = 'Shunt Voltage (mV)'
+ws['E1'] = 'SoC (%)'
+
+try:
+    while True:
+        Vb = ina.voltage()
+        Ib = ina.current()
+        p = ina.power()
+        shunt_vol = ina.shunt_voltage()
+
+        Battery_current += Ib * (sample_time / 3600)
+        soc = (1 - (Battery_current / Battery_capacity)) * 100
+
+        print(f"Voltage: {Vb:.2f} V | Current: {Ib:.2f} mA | Power: {p:.2f} mW")
+        print(f"Shunt Voltage: {shunt_vol:.2f} mV | SoC: {soc:.2f}%\n")
+
+        ws.append([Vb, Ib, p, shunt_vol, soc])
+
+        lcd.clear()
+        lcd.message(f"{Vb:.2f}V {Ib:.2f}mA")
+        lcd.message(f"\nSOC:{soc:.2f}%")
+
+        sleep(sample_time)
+
+except DeviceRangeError as e:
+    print(e)
+
+except KeyboardInterrupt:
+    print("\nProgram stopped by user")
+
+finally:
+    # Voltage chart
+    c1 = LineChart()
+    c1.title = "Battery Voltage"
+    c1.y_axis.title = "Voltage (V)"
+    c1.x_axis.title = "Sample"
+    data = Reference(ws, min_col=1, min_row=1, max_row=ws.max_row)
+    c1.add_data(data, titles_from_data=True)
+    ws.add_chart(c1, "H4")
+
+    # Current chart
+    c2 = LineChart()
+    c2.title = "Battery Current"
+    c2.y_axis.title = "Current (mA)"
+    c2.x_axis.title = "Sample"
+    data = Reference(ws, min_col=2, min_row=1, max_row=ws.max_row)
+    c2.add_data(data, titles_from_data=True)
+    ws.add_chart(c2, "H20")
+
+    # SoC chart
+    c3 = LineChart()
+    c3.title = "State of Charge"
+    c3.y_axis.title = "SoC (%)"
+    c3.x_axis.title = "Sample"
+    data = Reference(ws, min_col=5, min_row=1, max_row=ws.max_row)
+    c3.add_data(data, titles_from_data=True)
+    ws.add_chart(c3, "H36")
+
+    # Save Excel file
+    filename = "Power_Logger_" + time.strftime("%d_%b_%Y_%H_%M_%S") + ".xlsx"
+    wb.save(filename)
